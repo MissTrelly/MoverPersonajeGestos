@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control Gestual del Personaje</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            text-align: center;
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .game-area {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            margin: 20px 0;
+        }
+
+        #gameCanvas {
+            border: 3px solid #333;
+            border-radius: 10px;
+            background: #f0f0f0;
+        }
+
+        .video-container {
+            position: relative;
+            border: 3px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        #video {
+            width: 300px;
+            height: 225px;
+            transform: scaleX(-1); /* Espejo para mejor experiencia */
+        }
+
+        .overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+
+        .loading {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .ready {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .instructions {
+            background: #e2e3e5;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            text-align: left;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        .gesto-info {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 10px 0;
+            min-height: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Control Gestual del Personaje</h1>
+        
+        <div id="status" class="loading">Inicializando cámara y modelo...</div>
+        
+        <div class="instructions">
+            <h3>📋 Instrucciones:</h3>
+            <p>• <strong>Arriba:</strong> Mueve tu mano hacia arriba</p>
+            <p>• <strong>Abajo:</strong> Mueve tu mano hacia abajo</p>
+            <p>• <strong>Izquierda:</strong> Mueve tu mano hacia la izquierda</p>
+            <p>• <strong>Derecha:</strong> Mueve tu mano hacia la derecha</p>
+            <p>• Asegúrate de tener buena iluminación</p>
+            <p>• Mantén tu mano visible en la cámara</p>
+        </div>
+
+        <div class="game-area">
+            <div>
+                <h3>🎯 Juego</h3>
+                <canvas id="gameCanvas" width="600" height="400"></canvas>
+            </div>
+            
+            <div class="video-container">
+                <h3>📷 Cámara</h3>
+                <video id="video" autoplay playsinline muted></video>
+                <div class="overlay">Vista previa</div>
+            </div>
+        </div>
+
+        <div class="gesto-info" id="gestoInfo">Gesto detectado: ---</div>
+
+        <div class="controls">
+            <button onclick="iniciarCamara()">▶️ Iniciar Cámara</button>
+            <button onclick="pausarDeteccion()">⏸️ Pausar</button>
+            <button onclick="reiniciarJuego()">🔄 Reiniciar</button>
+        </div>
+    </div>
+
+    <script>
+        // Variables globales
+        let video, canvas, ctx, model;
+        let personaje = { 
+            x: 300, 
+            y: 200, 
+            ancho: 40, 
+            alto: 40,
+            direccion: 'ninguno'  // Dirección actual
+        };
+        let deteccionActiva = false;
+        let animationId;
+        
+        // Imágenes del personaje
+        let imagenArriba, imagenAbajo, imagenIzquierda, imagenDerecha;
+        let imagenesCargadas = false;
+
+        // Elementos de la interfaz
+        const statusElement = document.getElementById('status');
+        const gestoInfoElement = document.getElementById('gestoInfo');
+
+        // Estados del juego
+        const estado = {
+            CARGANDO: 'loading',
+            LISTO: 'ready',
+            ERROR: 'error'
+        };
+
+        function actualizarEstado(nuevoEstado, mensaje) {
+            statusElement.className = nuevoEstado;
+            statusElement.textContent = mensaje;
+        }
+
+        // Cargar las imágenes del personaje
+        function cargarImagenes() {
+            return new Promise((resolve, reject) => {
+                let imagenesCargadas = 0;
+                const totalImagenes = 4;
+                
+                // Reemplaza estas rutas con las de tus imágenes PNG
+                imagenArriba = new Image();
+                imagenArriba.src = 'imagenArriba.jpg'; // Ruta a tu imagen para arriba
+                imagenArriba.onload = () => {
+                    imagenesCargadas++;
+                    if (imagenesCargadas === totalImagenes) resolve();
+                };
+                imagenArriba.onerror = () => {
+                    console.error('Error cargando imagen para arriba');
+                    // Crear imagen de respaldo
+                    imagenArriba = crearImagenRespaldo('#ff0000', '↑');
+                    imagenesCargadas++;
+                    if (imagenesCargadas === totalImagenes) resolve();
+                };
+                
+                imagenAbajo = new Image();
+                imagenAbajo.src = 'imagenAbajo.jpg'; // Ruta a tu imagen para abajo
+                imagenAbajo.onload = () => {
+                    imagenesCargadas++;
+                    if (imagenesCargadas === totalImagenes) resolve();
+                };
+                imagenAbajo.onerror = () => {
+                    console.error('Error cargando imagen para abajo');
+                    // Crear imagen de respaldo
+                    imagenAbajo = crearImagenRespaldo('#00ff00', '↓');
+                    imagenesCargadas++;
+                    if (imagenesCargadas === totalImagenes) resolve();
+                };
+                
+                imagenIzquierda = new Image();
+                imagenIzquierda.src = 'imagenDerecha.jpg'; // Ruta a tu imagen para izquierda
+                imagenIzquierda.onload = () => {
+                    imagenesCargadas++;
+                    if (imagenesCargadas === totalImagenes) resolve();
+                };
+                imagenIzquierda.onerror = () => {
+                    console.error('Error cargando imagen para izquierda');
+                    // Crear imagen de respaldo
+                    imagenIzquierda = crearImagenRespaldo('#0000ff', '←');
+                    imagenesCargadas++;
+                    if (imagenesCargadas === totalImagenes) resolve();
+                };
+                
+                imagenDerecha = new Image();
+                imagenDerecha.src = 'imagenIzquierda.jpg'; // Ruta a tu imagen para derecha
+                imagenDerecha.onload = () => {
+                    imagenesCargadas++;
+                    if (imagenesCargadas === totalImagenes) resolve();
+                };
+                imagenDerecha.onerror = () => {
+                    console.error('Error cargando imagen para derecha');
+                    // Crear imagen de respaldo
+                    imagenDerecha = crearImagenRespaldo('#ffff00', '→');
+                    imagenesCargadas++;
+                    if (imagenesCargadas === totalImagenes) resolve();
+                };
+            });
+        }
+
+        // Crear imagen de respaldo si no se cargan las imágenes PNG
+        function crearImagenRespaldo(color, texto) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 40;
+            canvas.height = 40;
+            const ctx = canvas.getContext('2d');
+            
+            // Dibujar círculo
+            ctx.beginPath();
+            ctx.arc(20, 20, 18, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Dibujar texto
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(texto, 20, 20);
+            
+            const img = new Image();
+            img.src = canvas.toDataURL();
+            return img;
+        }
+
+        // Inicializar cámara
+        async function iniciarCamara() {
+            try {
+                video = document.getElementById('video');
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: "user" 
+                    } 
+                });
+                
+                video.srcObject = stream;
+                
+                // Esperar a que el video esté listo
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        resolve();
+                    };
+                });
+                
+                actualizarEstado(estado.LISTO, '✅ Cámara activada - Moviendo mano...');
+                deteccionActiva = true;
+                iniciarDeteccion();
+                
+            } catch (error) {
+                console.error('Error al acceder a la cámara:', error);
+                actualizarEstado(estado.ERROR, '❌ Error: No se pudo acceder a la cámara');
+            }
+        }
+
+        // Cargar modelo de detección de manos
+        async function cargarModelo() {
+            try {
+                actualizarEstado(estado.CARGANDO, '📦 Cargando modelo de detección...');
+                model = await handpose.load();
+                actualizarEstado(estado.LISTO, '✅ Modelo cargado - Listo para iniciar');
+            } catch (error) {
+                console.error('Error cargando el modelo:', error);
+                actualizarEstado(estado.ERROR, '❌ Error cargando el modelo de detección');
+            }
+        }
+
+        // Analizar gestos de la mano
+        function analizarGestos(landmarks) {
+            if (!landmarks || landmarks.length === 0) return 'ninguno';
+
+            const INDICE = 8;   // Punta del dedo índice
+            const PULGAR = 4;   // Punta del pulgar
+            const MUNECA = 0;   // Muñeca
+
+            const indice = landmarks[INDICE];
+            const pulgar = landmarks[PULGAR];
+            const muneca = landmarks[MUNECA];
+
+            // Calcular diferencias relativas a la muñeca
+            const diffX = indice[0] - muneca[0];
+            const diffY = indice[1] - muneca[1];
+
+            // Umbrales para detección (ajustables)
+            const UMBRAL = 40;
+
+            if (Math.abs(diffX) > Math.abs(diffY)) {
+                // Movimiento horizontal más pronunciado
+                if (diffX < -UMBRAL) return 'izquierda';
+                if (diffX > UMBRAL) return 'derecha';
+            } else {
+                // Movimiento vertical más pronunciado
+                if (diffY < -UMBRAL) return 'arriba';
+                if (diffY > UMBRAL) return 'abajo';
+            }
+
+            return 'ninguno';
+        }
+
+        // Mover el personaje según el gesto
+        function moverPersonaje(direccion) {
+            const velocidad = 6;
+            
+            // Actualizar dirección del personaje
+            personaje.direccion = direccion;
+            
+            switch(direccion) {
+                case 'arriba': 
+                    personaje.y = Math.max(personaje.alto/2, personaje.y - velocidad); 
+                    break;
+                case 'abajo': 
+                    personaje.y = Math.min(400 - personaje.alto/2, personaje.y + velocidad); 
+                    break;
+                case 'derecha': 
+                    personaje.x = Math.max(personaje.ancho/2, personaje.x - velocidad); 
+                    break;
+                case 'izquierda': 
+                    personaje.x = Math.min(600 - personaje.ancho/2, personaje.x + velocidad); 
+                    break;
+            }
+            
+            // Actualizar información en pantalla
+            gestoInfoElement.textContent = `Gesto detectado: ${direccion.toUpperCase()}`;
+            gestoInfoElement.style.color = direccion === 'ninguno' ? '#666' : '#007bff';
+        }
+
+        // Dibujar el juego
+        function dibujarJuego() {
+            if (!ctx) return;
+
+            // Limpiar canvas
+            ctx.clearRect(0, 0, 600, 400);
+            
+            // Dibujar fondo
+            ctx.fillStyle = '#f8f9fa';
+            ctx.fillRect(0, 0, 600, 400);
+            
+            // Dibujar grid (opcional)
+            ctx.strokeStyle = '#e9ecef';
+            ctx.lineWidth = 1;
+            for (let x = 0; x <= 600; x += 50) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, 400);
+                ctx.stroke();
+            }
+            for (let y = 0; y <= 400; y += 50) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(600, y);
+                ctx.stroke();
+            }
+            
+            // Dibujar personaje según la dirección
+            let imagenActual;
+            switch(personaje.direccion) {
+                case 'arriba':
+                    imagenActual = imagenArriba;
+                    break;
+                case 'abajo':
+                    imagenActual = imagenAbajo;
+                    break;
+                case 'izquierda':
+                    imagenActual = imagenIzquierda;
+                    break;
+                case 'derecha':
+                    imagenActual = imagenDerecha;
+                    break;
+                default:
+                    // Si no hay dirección específica, usar la imagen de abajo
+                    imagenActual = imagenAbajo;
+            }
+            
+            // Dibujar la imagen centrada en la posición del personaje
+            if (imagenActual && imagenesCargadas) {
+                ctx.drawImage(
+                    imagenActual, 
+                    personaje.x - personaje.ancho/2, 
+                    personaje.y - personaje.alto/2, 
+                    personaje.ancho, 
+                    personaje.alto
+                );
+            }
+        }
+
+        // Detección continua de gestos
+        async function iniciarDeteccion() {
+            if (!deteccionActiva || !model || !video) return;
+
+            try {
+                const predictions = await model.estimateHands(video);
+                
+                if (predictions.length > 0) {
+                    const landmarks = predictions[0].landmarks;
+                    const direccion = analizarGestos(landmarks);
+                    moverPersonaje(direccion);
+                } else {
+                    gestoInfoElement.textContent = 'Gesto detectado: ---';
+                    gestoInfoElement.style.color = '#666';
+                    personaje.direccion = 'ninguno';
+                }
+            } catch (error) {
+                console.error('Error en detección:', error);
+            }
+
+            // Continuar detección
+            if (deteccionActiva) {
+                animationId = requestAnimationFrame(iniciarDeteccion);
+            }
+        }
+
+        function pausarDeteccion() {
+            deteccionActiva = !deteccionActiva;
+            
+            if (deteccionActiva) {
+                iniciarDeteccion();
+                actualizarEstado(estado.LISTO, '✅ Detección activa');
+            } else {
+                cancelAnimationFrame(animationId);
+                actualizarEstado(estado.LISTO, '⏸️ Detección pausada');
+            }
+        }
+
+        function reiniciarJuego() {
+            personaje.x = 300;
+            personaje.y = 200;
+            personaje.direccion = 'ninguno';
+            gestoInfoElement.textContent = 'Gesto detectado: ---';
+            dibujarJuego();
+        }
+
+        // Inicializar cuando la página cargue
+        window.addEventListener('load', async () => {
+            // Configurar canvas
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            
+            // Cargar imágenes
+            actualizarEstado(estado.CARGANDO, '🖼️ Cargando imágenes del personaje...');
+            await cargarImagenes();
+            imagenesCargadas = true;
+            
+            // Dibujar estado inicial
+            dibujarJuego();
+            
+            // Cargar modelo
+            await cargarModelo();
+            
+            // Iniciar bucle de dibujo
+            setInterval(dibujarJuego, 1000/60); // 60 FPS
+        });
+
+        // Manejar errores globales
+        window.addEventListener('error', (e) => {
+            console.error('Error global:', e.error);
+            actualizarEstado(estado.ERROR, '❌ Error en la aplicación');
+        });
+    </script>
+</body>
+</html>
