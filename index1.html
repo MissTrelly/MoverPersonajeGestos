@@ -237,7 +237,7 @@
                 };
                 
                 imagenIzquierda = new Image();
-                imagenIzquierda.src = 'imagenDerecha.jpg'; // Ruta a tu imagen para izquierda
+                imagenIzquierda.src = 'imagenIzquierda.jpg'; // Ruta a tu imagen para izquierda
                 imagenIzquierda.onload = () => {
                     imagenesCargadas++;
                     if (imagenesCargadas === totalImagenes) resolve();
@@ -251,7 +251,7 @@
                 };
                 
                 imagenDerecha = new Image();
-                imagenDerecha.src = 'imagenIzquierda.jpg'; // Ruta a tu imagen para derecha
+                imagenDerecha.src = 'imagenDerecha.jpg'; // Ruta a tu imagen para derecha
                 imagenDerecha.onload = () => {
                     imagenesCargadas++;
                     if (imagenesCargadas === totalImagenes) resolve();
@@ -360,8 +360,8 @@
 
             if (Math.abs(diffX) > Math.abs(diffY)) {
                 // Movimiento horizontal más pronunciado
-                if (diffX < -UMBRAL) return 'izquierda';
-                if (diffX > UMBRAL) return 'derecha';
+                if (diffX < -UMBRAL) return 'derecha';
+                if (diffX > UMBRAL) return 'izquierda';
             } else {
                 // Movimiento vertical más pronunciado
                 if (diffY < -UMBRAL) return 'arriba';
@@ -385,10 +385,10 @@
                 case 'abajo': 
                     personaje.y = Math.min(400 - personaje.alto/2, personaje.y + velocidad); 
                     break;
-                case 'derecha': 
+                case 'izquierda': 
                     personaje.x = Math.max(personaje.ancho/2, personaje.x - velocidad); 
                     break;
-                case 'izquierda': 
+                case 'derecha': 
                     personaje.x = Math.min(600 - personaje.ancho/2, personaje.x + velocidad); 
                     break;
             }
